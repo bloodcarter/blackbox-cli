@@ -33,8 +33,8 @@ node blackbox-cli.js watch
 
 ### Option 2: Run with npx (no installation needed)
 ```bash
-npx github:your-org/blackbox-cli batch-call sample.csv agent_123
-npx github:your-org/blackbox-cli watch
+npx git+https://github.com/bloodcarter/blackbox-cli.git batch-call sample.csv agent_123
+npx git+https://github.com/bloodcarter/blackbox-cli.git watch
 ```
 
 ## Features
