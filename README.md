@@ -2,6 +2,45 @@
 
 A modern command-line interface for creating batch calls using the BlackBox API from CSV files and monitoring campaign progress in real-time.
 
+## Quick Start
+
+A simple batch calling tool for BlackBox API. Follow these two steps to launch and monitor your calling campaigns.
+
+### Prerequisites
+- Node.js installed on your system
+- Your Dasha API key from https://playground.dasha.ai/apikey
+- Your agent ID (the UUID from your agent's URL)
+
+### Step 1: Launch a Campaign
+
+```bash
+npx git+https://github.com/bloodcarter/blackbox-cli.git batch-call ./sample-calls.csv <AGENT_ID> --api-key <API_KEY>
+```
+
+**Where to find your values:**
+- `<AGENT_ID>`: The UUID at the end of your agent URL  
+  Example: If your URL is `https://blackbox.dasha.ai/agents/edit/18a55759-7fdb-42e1-9c63-8d3b18be850f`  
+  Your agent ID is: `18a55759-7fdb-42e1-9c63-8d3b18be850f`
+  
+- `<API_KEY>`: Get it from https://playground.dasha.ai/apikey
+
+**Example command:**
+```bash
+npx git+https://github.com/bloodcarter/blackbox-cli.git batch-call ./sample-calls.csv 18a55759-7fdb-42e1-9c63-8d3b18be850f --api-key your-api-key-here
+```
+
+### Step 2: Monitor Your Campaign
+
+```bash
+npx git+https://github.com/bloodcarter/blackbox-cli.git watch --api-key <API_KEY>
+```
+
+This will show real-time progress of your campaign with:
+- Live status updates
+- Progress bars
+- Call success/failure rates
+- Interactive controls (press 'E' to export results, 'Q' to quit)
+
 ## Setup
 
 1. Clone the repository or download the files
