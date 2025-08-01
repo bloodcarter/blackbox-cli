@@ -41,6 +41,24 @@ This will show real-time progress of your campaign with:
 - Call success/failure rates
 - Interactive controls (press 'E' to export results, 'Q' to quit)
 
+### Sample CSV Format
+
+Create a CSV file with the following format:
+
+```csv
+endpoint,priority,deadline,timezone,customerName,campaignId,notes
++15551234567,,,,"Test Call 1","test_batch","First test call"
++15559876543,,,,"Test Call 2","test_batch","Second test call"
++15555551234,,,,"Test Call 3","test_batch","Third test call"
+```
+
+**Column descriptions:**
+- `endpoint` (required): Phone number to call (with country code)
+- `priority` (optional): Call priority, defaults to 1
+- `deadline` (optional): Call deadline in ISO format, defaults to 10 seconds from now
+- `timezone` (optional): Timezone for the call, defaults to system timezone
+- Any additional columns (like `customerName`, `campaignId`, `notes`) will be added to `additionalData`
+
 ## Setup
 
 1. Clone the repository or download the files
@@ -168,8 +186,8 @@ The CSV file should have the following columns:
 ```csv
 endpoint,priority,deadline,timezone,customerName,campaignId,notes
 +15551234567,,,,"Test Call 1","test_batch","First test call"
-+15551234567,,,,"Test Call 2","test_batch","Second test call"
-+15551234567,,,,"Test Call 3","test_batch","Third test call"
++15559876543,,,,"Test Call 2","test_batch","Second test call"
++15555551234,,,,"Test Call 3","test_batch","Third test call"
 ```
 
 ## Examples

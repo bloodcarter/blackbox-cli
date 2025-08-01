@@ -1,0 +1,39 @@
+{
+  "campaignId": "campaign_2025-08-01T11-42-17-484Z",
+  "csvFile": "sample-calls.csv",
+  "agentId": "c36bce40-88e4-494d-bb82-83e88aa34aa4",
+  "totalCalls": 3,
+  "successful": 3,
+  "callIds": [
+    "f92cde50-a066-43c7-9b74-3f043bd11469",
+    "21fbf90f-8aab-4ee1-81c5-35e016e83c60",
+    "c8314709-8d70-445a-8882-057680af1fb3"
+  ],
+  "callMapping": {
+    "f92cde50-a066-43c7-9b74-3f043bd11469": {
+      "endpoint": "+15551234567",
+      "additionalData": {
+        "customerName": "Test Call 1",
+        "campaignId": "test_batch",
+        "notes": "First test call"
+      }
+    },
+    "21fbf90f-8aab-4ee1-81c5-35e016e83c60": {
+      "endpoint": "+15551234567",
+      "additionalData": {
+        "customerName": "Test Call 2",
+        "campaignId": "test_batch",
+        "notes": "Second test call"
+      }
+    },
+    "c8314709-8d70-445a-8882-057680af1fb3": {
+      "endpoint": "+15551234567",
+      "additionalData": {
+        "customerName": "Test Call 3",
+        "campaignId": "test_batch",
+        "notes": "Third test call"
+      }
+    }
+  },
+  "createdAt": "2025-08-01T11:42:17.484Z"
+}
