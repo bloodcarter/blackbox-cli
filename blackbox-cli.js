@@ -70,6 +70,37 @@ program
   .action(watchCommand);
 
 /**
+ * Validate phone number format
+ */
+function validatePhoneNumber(phoneNumber) {
+  // Remove any whitespace
+  const cleaned = phoneNumber.trim();
+  
+  // Check if starts with +
+  if (!cleaned.startsWith('+')) {
+    throw new Error('Phone number must start with + (e.g., +1234567890)');
+  }
+  
+  // Check for invalid characters
+  if (cleaned.includes('-')) {
+    throw new Error('Phone number must not contain dashes (-)');
+  }
+  
+  // Check if contains only + followed by digits
+  if (!/^\+\d+$/.test(cleaned)) {
+    throw new Error('Phone number must contain only digits after the + sign');
+  }
+  
+  // Check reasonable length (between 7 and 15 digits after +)
+  const digitsOnly = cleaned.substring(1);
+  if (digitsOnly.length < 7 || digitsOnly.length > 15) {
+    throw new Error('Phone number must be between 7 and 15 digits (excluding +)');
+  }
+  
+  return cleaned;
+}
+
+/**
  * Get system timezone
  */
 function getSystemTimezone() {
@@ -131,9 +162,12 @@ async function readCallsFromCSV(filePath, stats, verbose) {
             throw new Error('Missing required field: endpoint');
           }
           
+          // Validate phone number
+          const validatedEndpoint = validatePhoneNumber(row.endpoint);
+          
           // Build call request
           const callRequest = {
-            endpoint: row.endpoint.trim(),
+            endpoint: validatedEndpoint,
             priority: parseInt(row.priority) || 1,  // Default priority is 1
             callDeadLine: parseDeadline(row.deadline),
             timezone: row.timezone ? row.timezone.trim() : getSystemTimezone()
@@ -656,6 +690,7 @@ program.parse(process.argv);
 module.exports = {
   parseDeadline,
   getSystemTimezone,
+  validatePhoneNumber,
   readCallsFromCSV,
   Stats
 };
