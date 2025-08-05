@@ -78,17 +78,12 @@ program
  * Validate phone number format
  */
 function validatePhoneNumber(phoneNumber) {
-  // Remove any whitespace
-  const cleaned = phoneNumber.trim();
+  // Remove common formatting characters (spaces, dashes, parentheses)
+  const cleaned = phoneNumber.trim().replace(/[\s\-()]/g, '');
   
   // Check if starts with +
   if (!cleaned.startsWith('+')) {
     throw new Error('Phone number must start with + (e.g., +1234567890)');
-  }
-  
-  // Check for invalid characters
-  if (cleaned.includes('-')) {
-    throw new Error('Phone number must not contain dashes (-)');
   }
   
   // Check if contains only + followed by digits
@@ -240,21 +235,36 @@ async function readCallsFromCSV(filePath, stats, enrolledEndpoints, verbose) {
             throw new Error('Missing required field: endpoint');
           }
           
-          // Check if already enrolled
-          if (enrolledEndpoints.has(row.endpoint.trim())) {
-            skippedCount++;
-            if (verbose) {
-              console.log(chalk.gray(`  Row ${rowNumber}: ${row.endpoint} (already enrolled)`));
-            }
+          // Clear any existing error_message for revalidation
+          delete row.error_message;
+          
+          // Validate phone number first to get normalized form
+          let validatedEndpoint;
+          try {
+            validatedEndpoint = validatePhoneNumber(row.endpoint);
+          } catch (validationError) {
+            // If validation fails, we still need to record the error
+            console.error(chalk.red(`✗ Error parsing row ${rowNumber}: ${JSON.stringify(row)}`));
+            console.error(chalk.red(`  Reason: ${validationError.message}`));
+            stats.addError({
+              row: rowNumber,
+              data: row,
+              error: validationError.message
+            });
+            rowData.error = validationError.message;
             allRows.push(rowData);
             return;
           }
           
-          // Clear any existing error_message for revalidation
-          delete row.error_message;
-          
-          // Validate phone number
-          const validatedEndpoint = validatePhoneNumber(row.endpoint);
+          // Check if already enrolled (using normalized number)
+          if (enrolledEndpoints.has(validatedEndpoint)) {
+            skippedCount++;
+            if (verbose) {
+              console.log(chalk.gray(`  Row ${rowNumber}: ${row.endpoint} → ${validatedEndpoint} (already enrolled)`));
+            }
+            allRows.push(rowData);
+            return;
+          }
           
           // Build call request
           const callRequest = {

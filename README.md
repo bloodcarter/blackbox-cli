@@ -53,11 +53,17 @@ endpoint,priority,deadline,timezone,customerName,campaignId,notes
 ```
 
 **Column descriptions:**
-- `endpoint` (required): Phone number to call (with country code)
+- `endpoint` (required): Phone number to call (must start with +, e.g., +15551234567)
 - `priority` (optional): Call priority, defaults to 1
-- `deadline` (optional): Call deadline in ISO format, defaults to 10 seconds from now
+- `deadline` (optional): Call deadline in ISO format, defaults to 24 hours from now
 - `timezone` (optional): Timezone for the call, defaults to system timezone
 - Any additional columns (like `customerName`, `campaignId`, `notes`) will be added to `additionalData`
+
+**Phone Number Format:**
+- Must start with + (e.g., +1234567890)
+- Can include spaces, dashes, or parentheses (they'll be stripped automatically)
+- Must be 7-15 digits after the country code
+- Examples: `+1 555 123 4567`, `+1-555-123-4567`, `+1 (555) 123-4567` all work
 
 ## Setup
 
@@ -105,6 +111,10 @@ npx git+https://github.com/bloodcarter/blackbox-cli.git watch
 - 📈 Real-time campaign monitoring with live updates
 - 💾 Export campaign results to CSV
 - ⌨️ Interactive keyboard controls during monitoring
+- 📞 Smart phone number validation with automatic formatting
+- 🔄 Campaign continuation - automatically skips already enrolled numbers
+- ⏰ Schedule awareness - shows when calls are paused due to agent working hours
+- 📝 In-line error reporting in CSV files
 
 
 ## Usage
@@ -175,10 +185,11 @@ While monitoring a campaign, use these keyboard shortcuts:
 ## CSV Format
 
 The CSV file should have the following columns:
-- `endpoint` (required): Phone number to call
+- `endpoint` (required): Phone number to call (must start with +)
 - `priority` (optional): Call priority (default: 1)
-- `deadline` (optional): Call deadline in ISO format (default: 10 seconds from now)
+- `deadline` (optional): Call deadline in ISO format (default: 24 hours from now)
 - `timezone` (optional): Timezone for the call (default: system timezone)
+- `error_message` (auto-generated): Validation errors appear here after running
 - Any other columns will be added to `additionalData`
 
 ### Example CSV
@@ -258,8 +269,31 @@ npm test
 ## Default Values
 
 - **Priority**: 1 (if not specified in CSV)
-- **Deadline**: 10 seconds from script execution (if not specified)
+- **Deadline**: 24 hours from script execution (if not specified)
 - **Timezone**: System timezone (if not specified)
 - **API URL**: https://blackbox.dasha.ai
 - **Batch Size**: 100 calls per batch
-- **Rate Limit Delay**: 1000ms (1 second) between batches# blackbox-cli
+- **Rate Limit Delay**: 1000ms (1 second) between batches
+
+## What's New
+
+### Recent Updates
+- **Smart Campaign Continuation**: Re-running the same CSV file will automatically skip already enrolled numbers
+- **Phone Number Validation**: Automatic formatting and validation of phone numbers with helpful error messages
+- **Schedule Awareness**: The watch command now shows when calls are paused due to agent working hours
+- **In-line Error Reporting**: Validation errors are written directly to your CSV file for easy fixing
+- **Extended Default Deadline**: Changed from 10 seconds to 24 hours for more practical scheduling
+
+### Error Handling
+When phone numbers fail validation, the tool will:
+1. Add an `error_message` column to your CSV
+2. Continue processing valid numbers
+3. Show which numbers failed and why
+4. Allow you to fix and re-run - fixed numbers will be processed automatically
+
+### Schedule Display
+The watch command will show:
+- Current agent schedule and timezone
+- Warning when outside working hours
+- Next available calling window
+- Link to adjust schedule in the BlackBox UI
