@@ -24,6 +24,7 @@ class Stats {
     this.total = 0;
     this.successful = 0;
     this.failed = 0;
+    this.skipped = 0;
     this.errors = [];
     this.createdCalls = [];
   }
@@ -39,6 +40,10 @@ class Stats {
 
   addFailedCount(count) {
     this.failed += count;
+  }
+  
+  addSkippedCount(count) {
+    this.skipped += count;
   }
 }
 
@@ -101,41 +106,72 @@ function validatePhoneNumber(phoneNumber) {
 }
 
 /**
- * Write invalid entries to CSV file
+ * Write processed CSV with error messages
  */
-function writeInvalidEntriesCSV(csvFile, errors) {
-  if (errors.length === 0) {
-    return null;
+function writeProcessedCSV(csvFile, allRows) {
+  // Get headers from first row, add error_message if not present
+  const firstRow = allRows[0];
+  const headers = Object.keys(firstRow.data);
+  if (!headers.includes('error_message')) {
+    headers.push('error_message');
   }
-  
-  // Generate filename with timestamp
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const dir = path.dirname(csvFile);
-  const baseName = path.basename(csvFile, '.csv');
-  const invalidFilename = path.join(dir, `${baseName}-invalid-${timestamp}.csv`);
-  
-  // Get headers from first error entry
-  const firstError = errors[0];
-  const headers = [...Object.keys(firstError.data), 'error_reason'];
   
   // Build CSV content
   let csvContent = headers.map(h => `"${h}"`).join(',') + '\n';
   
-  errors.forEach(error => {
-    const row = headers.map(header => {
-      if (header === 'error_reason') {
-        return `"${error.error.replace(/"/g, '""')}"`;
+  allRows.forEach(row => {
+    const values = headers.map(header => {
+      if (header === 'error_message') {
+        return `"${row.error || ''}"`;
       }
-      const value = error.data[header] || '';
+      const value = row.data[header] || '';
       return `"${String(value).replace(/"/g, '""')}"`;
     });
-    csvContent += row.join(',') + '\n';
+    csvContent += values.join(',') + '\n';
   });
   
-  // Write to file
-  fs.writeFileSync(invalidFilename, csvContent);
+  // Write back to original file
+  fs.writeFileSync(csvFile, csvContent);
   
-  return invalidFilename;
+  return csvFile;
+}
+
+/**
+ * Load previously enrolled endpoints from campaign data
+ */
+function loadPreviousCampaignEndpoints(csvFile) {
+  const campaignsDir = path.join(__dirname, '.blackbox-campaigns');
+  const csvBaseName = path.basename(csvFile);
+  const enrolledEndpoints = new Set();
+  
+  if (!fs.existsSync(campaignsDir)) {
+    return enrolledEndpoints;
+  }
+  
+  // Look for campaigns that used this CSV file
+  const campaignFiles = fs.readdirSync(campaignsDir)
+    .filter(f => f.endsWith('.json') && f !== 'last-campaign.json');
+  
+  for (const campaignFile of campaignFiles) {
+    try {
+      const campaignData = JSON.parse(
+        fs.readFileSync(path.join(campaignsDir, campaignFile), 'utf8')
+      );
+      
+      // Check if this campaign used the same CSV file
+      if (campaignData.csvFile === csvBaseName && campaignData.callMapping) {
+        // Add all endpoints from this campaign
+        Object.values(campaignData.callMapping).forEach(call => {
+          enrolledEndpoints.add(call.endpoint);
+        });
+      }
+    } catch (error) {
+      // Skip invalid campaign files
+      continue;
+    }
+  }
+  
+  return enrolledEndpoints;
 }
 
 /**
@@ -183,22 +219,39 @@ function parseDeadline(deadlineStr) {
 /**
  * Read CSV file and parse calls
  */
-async function readCallsFromCSV(filePath, stats, verbose) {
+async function readCallsFromCSV(filePath, stats, enrolledEndpoints, verbose) {
   const spinner = ora('Reading CSV file...').start();
   
   return new Promise((resolve, reject) => {
     const calls = [];
+    const allRows = [];
     let rowNumber = 0;
+    let skippedCount = 0;
     
     fs.createReadStream(filePath)
       .pipe(csv())
       .on('data', (row) => {
         rowNumber++;
+        const rowData = { data: row, error: '' };
+        
         try {
           // Required fields
           if (!row.endpoint) {
             throw new Error('Missing required field: endpoint');
           }
+          
+          // Check if already enrolled
+          if (enrolledEndpoints.has(row.endpoint.trim())) {
+            skippedCount++;
+            if (verbose) {
+              console.log(chalk.gray(`  Row ${rowNumber}: ${row.endpoint} (already enrolled)`));
+            }
+            allRows.push(rowData);
+            return;
+          }
+          
+          // Clear any existing error_message for revalidation
+          delete row.error_message;
           
           // Validate phone number
           const validatedEndpoint = validatePhoneNumber(row.endpoint);
@@ -213,7 +266,7 @@ async function readCallsFromCSV(filePath, stats, verbose) {
           
           // Build additionalData from remaining fields
           const additionalData = {};
-          const knownFields = ['endpoint', 'priority', 'deadline', 'timezone'];
+          const knownFields = ['endpoint', 'priority', 'deadline', 'timezone', 'error_message'];
           
           for (const [key, value] of Object.entries(row)) {
             if (!knownFields.includes(key) && value) {
@@ -226,12 +279,12 @@ async function readCallsFromCSV(filePath, stats, verbose) {
           }
           
           calls.push(callRequest);
+          allRows.push(rowData);
           
           if (verbose) {
             console.log(chalk.gray(`  Row ${rowNumber}: ${callRequest.endpoint}`));
           }
         } catch (error) {
-          spinner.fail();
           console.error(chalk.red(`✗ Error parsing row ${rowNumber}: ${JSON.stringify(row)}`));
           console.error(chalk.red(`  Reason: ${error.message}`));
           stats.addError({
@@ -239,12 +292,15 @@ async function readCallsFromCSV(filePath, stats, verbose) {
             data: row,
             error: error.message
           });
+          rowData.error = error.message;
+          allRows.push(rowData);
         }
       })
       .on('end', () => {
-        spinner.succeed(chalk.green(`✓ Parsed ${calls.length} valid calls from CSV`));
-        stats.total = calls.length;
-        resolve(calls);
+        spinner.succeed(chalk.green(`✓ Parsed ${calls.length} valid calls from CSV (${skippedCount} already enrolled)`));
+        stats.total = rowNumber;
+        stats.addSkippedCount(skippedCount);
+        resolve({ calls, allRows });
       })
       .on('error', (error) => {
         spinner.fail(chalk.red('Failed to read CSV file'));
@@ -374,12 +430,16 @@ async function processBatches(calls, options, stats) {
 /**
  * Print summary report
  */
-function printSummary(stats, invalidEntriesFile) {
+function printSummary(stats) {
   console.log(chalk.blue('\n📊 Summary'));
   console.log(chalk.blue('=========='));
-  console.log(`Total calls processed: ${stats.total}`);
-  console.log(chalk.green(`✓ Successful: ${stats.successful}`));
-  console.log(chalk.red(`✗ Failed: ${stats.failed}`));
+  console.log(`Total rows in CSV: ${stats.total}`);
+  if (stats.skipped > 0) {
+    console.log(chalk.gray(`○ Already enrolled: ${stats.skipped}`));
+  }
+  console.log(chalk.green(`✓ Successfully enrolled: ${stats.successful}`));
+  console.log(chalk.red(`✗ Failed validation: ${stats.errors.length}`));
+  console.log(chalk.red(`✗ Failed API calls: ${stats.failed}`));
   
   if (stats.createdCalls.length > 0) {
     console.log(chalk.blue('\n📞 Sample Created Calls:'));
@@ -391,18 +451,15 @@ function printSummary(stats, invalidEntriesFile) {
   }
   
   if (stats.errors.length > 0) {
-    console.log(chalk.red(`\n⚠️  Errors (${stats.errors.length}):`));
+    console.log(chalk.red(`\n⚠️  Validation Errors (${stats.errors.length}):`));
     stats.errors.slice(0, 5).forEach((err, index) => {
-      console.log(chalk.red(`${index + 1}. ${JSON.stringify(err)}`));
+      console.log(chalk.red(`${index + 1}. Row ${err.row}: ${err.data.endpoint} - ${err.error}`));
     });
     if (stats.errors.length > 5) {
       console.log(chalk.red(`... and ${stats.errors.length - 5} more errors`));
     }
-    
-    if (invalidEntriesFile) {
-      console.log(chalk.yellow(`\n📄 Invalid entries saved to: ${invalidEntriesFile}`));
-      console.log(chalk.gray('   Review and fix the entries, then re-run with the corrected file.'));
-    }
+    console.log(chalk.yellow(`\n📝 Error messages have been added to the CSV file`));
+    console.log(chalk.gray('   Fix the entries and re-run to process them.'));
   }
 }
 
@@ -443,17 +500,24 @@ async function batchCallCommand(csvFile, agentId, options) {
   console.log('');
   
   try {
-    // Read and parse CSV
-    const calls = await readCallsFromCSV(csvFile, stats, options.verbose);
-    
-    // Write invalid entries to CSV if any
-    let invalidEntriesFile = null;
-    if (stats.errors.length > 0) {
-      invalidEntriesFile = writeInvalidEntriesCSV(csvFile, stats.errors);
-      console.log(chalk.yellow(`\n⚠️  ${stats.errors.length} invalid entries saved to: ${path.basename(invalidEntriesFile)}`));
+    // Load previously enrolled endpoints
+    const enrolledEndpoints = loadPreviousCampaignEndpoints(csvFile);
+    if (enrolledEndpoints.size > 0) {
+      console.log(chalk.blue(`ℹ️  Found existing campaign with ${enrolledEndpoints.size} enrolled numbers`));
     }
     
-    if (calls.length === 0) {
+    // Read and parse CSV
+    const { calls, allRows } = await readCallsFromCSV(csvFile, stats, enrolledEndpoints, options.verbose);
+    
+    // Write processed CSV with error messages
+    writeProcessedCSV(csvFile, allRows);
+    
+    if (calls.length === 0 && stats.errors.length === 0) {
+      console.log(chalk.yellow('⚠️  No new calls to process (all numbers already enrolled)'));
+      process.exit(0);
+    }
+    
+    if (calls.length === 0 && stats.errors.length > 0) {
       console.log(chalk.yellow('⚠️  No valid calls found in CSV file'));
       process.exit(0);
     }
@@ -482,48 +546,94 @@ async function batchCallCommand(csvFile, agentId, options) {
     
     // Save campaign metadata for watch command
     if (stats.successful > 0) {
-      const campaignId = `campaign_${new Date().toISOString().replace(/[:.]/g, '-')}`;
+      const campaignsDir = path.join(__dirname, '.blackbox-campaigns');
+      const csvBaseName = path.basename(csvFile);
       
-      // Create a mapping of callId to call details
-      const callMapping = {};
+      // Create campaigns directory if it doesn't exist
+      if (!fs.existsSync(campaignsDir)) {
+        fs.mkdirSync(campaignsDir, { recursive: true });
+      }
+      
+      // Look for existing campaign for this CSV
+      let existingCampaign = null;
+      let existingCampaignFile = null;
+      
+      const campaignFiles = fs.readdirSync(campaignsDir)
+        .filter(f => f.endsWith('.json') && f !== 'last-campaign.json');
+      
+      for (const file of campaignFiles) {
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(campaignsDir, file), 'utf8'));
+          if (data.csvFile === csvBaseName) {
+            existingCampaign = data;
+            existingCampaignFile = file;
+            break;
+          }
+        } catch (error) {
+          continue;
+        }
+      }
+      
+      // Create a mapping of callId to call details for new calls
+      const newCallMapping = {};
       stats.createdCalls.forEach(call => {
-        callMapping[call.callId] = {
+        newCallMapping[call.callId] = {
           endpoint: call.endpoint,
           additionalData: call.additionalData
         };
       });
       
-      const campaignData = {
-        campaignId,
-        csvFile: path.basename(csvFile),
-        agentId,
-        totalCalls: stats.total,
-        successful: stats.successful,
-        callIds: stats.createdCalls.map(call => call.callId),
-        callMapping: callMapping,  // Store endpoint mapping
-        createdAt: new Date().toISOString()
-      };
+      let campaignData;
+      let campaignId;
+      let campaignFile;
       
-      // Create campaigns directory if it doesn't exist
-      const campaignsDir = path.join(__dirname, '.blackbox-campaigns');
-      if (!fs.existsSync(campaignsDir)) {
-        fs.mkdirSync(campaignsDir, { recursive: true });
+      if (existingCampaign) {
+        // Update existing campaign
+        campaignId = existingCampaign.campaignId;
+        campaignFile = path.join(campaignsDir, existingCampaignFile);
+        
+        // Merge new calls into existing campaign
+        existingCampaign.callIds.push(...stats.createdCalls.map(call => call.callId));
+        existingCampaign.callMapping = { ...existingCampaign.callMapping, ...newCallMapping };
+        existingCampaign.totalCalls = existingCampaign.callIds.length;
+        existingCampaign.successful = existingCampaign.callIds.length;
+        existingCampaign.lastUpdated = new Date().toISOString();
+        
+        campaignData = existingCampaign;
+        
+        console.log(chalk.green(`\n✓ Updated existing campaign: ${campaignId}`));
+        console.log(chalk.gray(`  Added ${stats.successful} new calls (total: ${campaignData.totalCalls})`));
+      } else {
+        // Create new campaign
+        campaignId = `campaign_${new Date().toISOString().replace(/[:.]/g, '-')}`;
+        campaignFile = path.join(campaignsDir, `${campaignId}.json`);
+        
+        campaignData = {
+          campaignId,
+          csvFile: csvBaseName,
+          agentId,
+          totalCalls: stats.successful,
+          successful: stats.successful,
+          callIds: stats.createdCalls.map(call => call.callId),
+          callMapping: newCallMapping,
+          createdAt: new Date().toISOString()
+        };
+        
+        console.log(chalk.green(`\n✓ Campaign saved: ${campaignId}`));
       }
       
       // Save campaign data
-      const campaignFile = path.join(campaignsDir, `${campaignId}.json`);
       fs.writeFileSync(campaignFile, JSON.stringify(campaignData, null, 2));
       
       // Also save as last campaign for easy access
       const lastCampaignFile = path.join(campaignsDir, 'last-campaign.json');
       fs.writeFileSync(lastCampaignFile, JSON.stringify(campaignData, null, 2));
       
-      console.log(chalk.green(`\n✓ Campaign saved: ${campaignId}`));
       console.log(chalk.gray(`  Monitor with: node blackbox-cli.js watch`));
     }
     
     // Print summary
-    printSummary(stats, invalidEntriesFile);
+    printSummary(stats);
     
     // Exit with appropriate code
     process.exit(stats.failed > 0 ? 1 : 0);
@@ -741,7 +851,8 @@ module.exports = {
   parseDeadline,
   getSystemTimezone,
   validatePhoneNumber,
-  writeInvalidEntriesCSV,
+  writeProcessedCSV,
+  loadPreviousCampaignEndpoints,
   readCallsFromCSV,
   Stats
 };
