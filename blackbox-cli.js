@@ -101,6 +101,44 @@ function validatePhoneNumber(phoneNumber) {
 }
 
 /**
+ * Write invalid entries to CSV file
+ */
+function writeInvalidEntriesCSV(csvFile, errors) {
+  if (errors.length === 0) {
+    return null;
+  }
+  
+  // Generate filename with timestamp
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dir = path.dirname(csvFile);
+  const baseName = path.basename(csvFile, '.csv');
+  const invalidFilename = path.join(dir, `${baseName}-invalid-${timestamp}.csv`);
+  
+  // Get headers from first error entry
+  const firstError = errors[0];
+  const headers = [...Object.keys(firstError.data), 'error_reason'];
+  
+  // Build CSV content
+  let csvContent = headers.map(h => `"${h}"`).join(',') + '\n';
+  
+  errors.forEach(error => {
+    const row = headers.map(header => {
+      if (header === 'error_reason') {
+        return `"${error.error.replace(/"/g, '""')}"`;
+      }
+      const value = error.data[header] || '';
+      return `"${String(value).replace(/"/g, '""')}"`;
+    });
+    csvContent += row.join(',') + '\n';
+  });
+  
+  // Write to file
+  fs.writeFileSync(invalidFilename, csvContent);
+  
+  return invalidFilename;
+}
+
+/**
  * Get system timezone
  */
 function getSystemTimezone() {
@@ -336,7 +374,7 @@ async function processBatches(calls, options, stats) {
 /**
  * Print summary report
  */
-function printSummary(stats) {
+function printSummary(stats, invalidEntriesFile) {
   console.log(chalk.blue('\n📊 Summary'));
   console.log(chalk.blue('=========='));
   console.log(`Total calls processed: ${stats.total}`);
@@ -359,6 +397,11 @@ function printSummary(stats) {
     });
     if (stats.errors.length > 5) {
       console.log(chalk.red(`... and ${stats.errors.length - 5} more errors`));
+    }
+    
+    if (invalidEntriesFile) {
+      console.log(chalk.yellow(`\n📄 Invalid entries saved to: ${invalidEntriesFile}`));
+      console.log(chalk.gray('   Review and fix the entries, then re-run with the corrected file.'));
     }
   }
 }
@@ -402,6 +445,13 @@ async function batchCallCommand(csvFile, agentId, options) {
   try {
     // Read and parse CSV
     const calls = await readCallsFromCSV(csvFile, stats, options.verbose);
+    
+    // Write invalid entries to CSV if any
+    let invalidEntriesFile = null;
+    if (stats.errors.length > 0) {
+      invalidEntriesFile = writeInvalidEntriesCSV(csvFile, stats.errors);
+      console.log(chalk.yellow(`\n⚠️  ${stats.errors.length} invalid entries saved to: ${path.basename(invalidEntriesFile)}`));
+    }
     
     if (calls.length === 0) {
       console.log(chalk.yellow('⚠️  No valid calls found in CSV file'));
@@ -473,7 +523,7 @@ async function batchCallCommand(csvFile, agentId, options) {
     }
     
     // Print summary
-    printSummary(stats);
+    printSummary(stats, invalidEntriesFile);
     
     // Exit with appropriate code
     process.exit(stats.failed > 0 ? 1 : 0);
@@ -691,6 +741,7 @@ module.exports = {
   parseDeadline,
   getSystemTimezone,
   validatePhoneNumber,
+  writeInvalidEntriesCSV,
   readCallsFromCSV,
   Stats
 };
