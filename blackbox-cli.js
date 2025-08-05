@@ -369,6 +369,8 @@ async function sendBatchCalls(batch, batchNumber, apiUrl, apiKey, agentId, stats
 async function processBatches(calls, options, stats) {
   const { apiUrl, apiKey, agentId, batchSize, delay, verbose } = options;
   const batches = [];
+  let scheduledForFuture = false;
+  let earliestScheduleTime = null;
   
   // Split calls into batches
   for (let i = 0; i < calls.length; i += batchSize) {
@@ -403,6 +405,20 @@ async function processBatches(calls, options, stats) {
         verbose
       );
       
+      // Check if calls are scheduled for future
+      if (createdCalls.length > 0 && createdCalls[0].nextScheduleTime) {
+        const scheduleTime = new Date(createdCalls[0].nextScheduleTime);
+        const now = new Date();
+        const hoursDiff = (scheduleTime - now) / (1000 * 60 * 60);
+        
+        if (hoursDiff > 1) {
+          scheduledForFuture = true;
+          if (!earliestScheduleTime || scheduleTime < earliestScheduleTime) {
+            earliestScheduleTime = scheduleTime;
+          }
+        }
+      }
+      
       progressBar.update(stats.successful + stats.failed, {
         batch: i + 1,
         totalBatches: batches.length
@@ -425,6 +441,13 @@ async function processBatches(calls, options, stats) {
   }
   
   progressBar.stop();
+  
+  // Show warning if calls are scheduled for future
+  if (scheduledForFuture && earliestScheduleTime) {
+    console.log('\n' + chalk.bgBlue.white(' ℹ️  SCHEDULED FOR FUTURE '));
+    console.log(chalk.blue(`Calls scheduled for: ${earliestScheduleTime.toLocaleString()} due to agent working hours`));
+    console.log(chalk.gray('Calls will be automatically placed when the agent is available'));
+  }
 }
 
 /**
@@ -738,6 +761,15 @@ async function watchCommand(campaignId, options) {
     
     console.log(chalk.cyan('│') + ` Runtime: ${runtimeStr} | Started: ${new Date(campaignData.createdAt).toLocaleString()}`.padEnd(73) + chalk.cyan('│'));
     console.log(chalk.cyan('└─────────────────────────────────────────────────────────────────────────┘'));
+    
+    // Schedule Status
+    const scheduleStatus = watcher.isWithinSchedule();
+    if (!scheduleStatus.isOpen && watcher.agentSchedule) {
+      console.log('\n' + chalk.bgYellow.black(' ⚠️  OUTSIDE WORKING HOURS '));
+      console.log(chalk.yellow(`Calls paused until: ${scheduleStatus.nextWindow}`));
+      console.log(chalk.gray(`Agent schedule: ${watcher.formatScheduleDisplay()} ${watcher.agentTimezone}`));
+      console.log(chalk.cyan(`💡 To adjust schedule: Visit https://blackbox.dasha.ai → Agents → Edit Agent → Schedule`));
+    }
     
     // Progress
     console.log('\n' + chalk.bold('Overall Progress'));
