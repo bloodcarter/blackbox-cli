@@ -85,9 +85,9 @@ function getSystemTimezone() {
  */
 function parseDeadline(deadlineStr) {
   if (!deadlineStr) {
-    // Default to 10 seconds from now
+    // Default to 24 hours from now
     const deadline = new Date();
-    deadline.setSeconds(deadline.getSeconds() + 10);
+    deadline.setHours(deadline.getHours() + 24);
     return deadline.toISOString();
   }
   
