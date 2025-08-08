@@ -779,6 +779,8 @@ async function watchCommand(campaignId, options) {
       console.log(chalk.yellow(`Calls paused until: ${scheduleStatus.nextWindow}`));
       console.log(chalk.gray(`Agent schedule: ${watcher.formatScheduleDisplay()} ${watcher.agentTimezone}`));
       console.log(chalk.cyan(`💡 To adjust schedule: Visit https://blackbox.dasha.ai → Agents → Edit Agent → Schedule`));
+    } else if (watcher.agentSchedule) {
+      console.log('\n' + chalk.gray(`Agent schedule: ${watcher.formatScheduleDisplay()} ${watcher.agentTimezone}`));
     }
     
     // Progress
