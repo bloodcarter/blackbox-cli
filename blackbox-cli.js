@@ -47,6 +47,37 @@ class Stats {
   }
 }
 
+/**
+ * Map HTTP status to a concise fatal error message shown in default mode
+ */
+function getFatalStatusMessage(status, agentId) {
+  switch (status) {
+    case 401:
+      return 'Invalid API key (401). Provide a valid key via --api-key or BLACKBOX_API_KEY.';
+    case 403:
+      return 'Forbidden (403). Your API key does not have access to this agent or resource.';
+    case 404:
+      return `Agent not found (404). Check the agent ID${agentId ? `: ${agentId}` : ''}.`;
+    default:
+      return '';
+  }
+}
+
+/**
+ * Determine primary API failure status if all API errors share the same status
+ */
+function computePrimaryApiFailure(errors) {
+  const apiErrors = (errors || []).filter(e => typeof e.status === 'number');
+  if (apiErrors.length === 0) return null;
+  const statusCounts = new Map();
+  for (const err of apiErrors) {
+    statusCounts.set(err.status, (statusCounts.get(err.status) || 0) + 1);
+  }
+  if (statusCounts.size !== 1) return null;
+  const [[status, count]] = Array.from(statusCounts.entries());
+  return { status, count };
+}
+
 // Initialize commander
 const program = new Command();
 
@@ -349,23 +380,12 @@ async function sendBatchCalls(batch, batchNumber, apiUrl, apiKey, agentId, stats
     
     return response.data;
   } catch (error) {
-    if (verbose) {
-      console.error(chalk.red(`  Batch ${batchNumber} failed:`));
-      
-      if (error.response) {
-        console.error(chalk.red(`    Status: ${error.response.status}`));
-        console.error(chalk.red(`    Error: ${JSON.stringify(error.response.data)}`));
-      } else if (error.request) {
-        console.error(chalk.red(`    Error: No response from server`));
-      } else {
-        console.error(chalk.red(`    Error: ${error.message}`));
-      }
-    }
+    const status = error?.response?.status;
     
     stats.addError({
       batch: batchNumber,
-      status: error.response?.status,
-      error: error.response?.data || error.message
+      status: status,
+      error: (error && error.response && error.response.data) || (error && error.message) || 'Unknown error'
     });
     
     stats.addFailedCount(batch.length);
@@ -444,8 +464,34 @@ async function processBatches(calls, options, stats) {
         totalBatches: batches.length
       });
       
-      if (verbose) {
-        console.error(chalk.yellow(`\n⚠️  Continuing with next batch despite error...`));
+      const status = error?.response?.status;
+      if (status === 401 || status === 403 || status === 404) {
+        // Stop progress bar before printing fatal messages to avoid interleaving
+        progressBar.stop();
+        const fatalMsg = getFatalStatusMessage(status, agentId);
+        if (fatalMsg) {
+          console.error(chalk.red(`✗ ${fatalMsg}`));
+        }
+        if (verbose) {
+          if (error && error.response) {
+            console.error(chalk.red(`    Status: ${error.response.status}`));
+            try {
+              console.error(chalk.red(`    Error: ${JSON.stringify(error.response.data)}`));
+            } catch (_) {
+              console.error(chalk.red('    Error: (unserializable response)'));
+            }
+          } else if (error && error.request) {
+            console.error(chalk.red('    Error: No response from server'));
+          } else {
+            console.error(chalk.red(`    Error: ${error?.message || 'Unknown error'}`));
+          }
+        }
+        console.error(chalk.red('Aborting further batches due to a fatal error.'));
+        break;
+      } else {
+        if (verbose) {
+          console.error(chalk.yellow(`\n⚠️  Continuing with next batch despite error...`));
+        }
       }
     }
   }
@@ -471,7 +517,8 @@ function printSummary(stats) {
     console.log(chalk.gray(`○ Already enrolled: ${stats.skipped}`));
   }
   console.log(chalk.green(`✓ Successfully enrolled: ${stats.successful}`));
-  console.log(chalk.red(`✗ Failed validation: ${stats.errors.length}`));
+  const validationErrors = (stats.errors || []).filter(e => typeof e.row === 'number' && e.data);
+  console.log(chalk.red(`✗ Failed validation: ${validationErrors.length}`));
   console.log(chalk.red(`✗ Failed API calls: ${stats.failed}`));
   
   if (stats.createdCalls.length > 0) {
@@ -483,16 +530,26 @@ function printSummary(stats) {
     });
   }
   
-  if (stats.errors.length > 0) {
-    console.log(chalk.red(`\n⚠️  Validation Errors (${stats.errors.length}):`));
-    stats.errors.slice(0, 5).forEach((err, index) => {
-      console.log(chalk.red(`${index + 1}. Row ${err.row}: ${err.data.endpoint} - ${err.error}`));
+  if (validationErrors.length > 0) {
+    console.log(chalk.red(`\n⚠️  Validation Errors (${validationErrors.length}):`));
+    validationErrors.slice(0, 5).forEach((err, index) => {
+      const endpoint = (err && err.data && err.data.endpoint) ? err.data.endpoint : '';
+      const rowStr = typeof err.row === 'number' ? `Row ${err.row}: ` : '';
+      console.log(chalk.red(`${index + 1}. ${rowStr}${endpoint} - ${err.error}`));
     });
-    if (stats.errors.length > 5) {
-      console.log(chalk.red(`... and ${stats.errors.length - 5} more errors`));
+    if (validationErrors.length > 5) {
+      console.log(chalk.red(`... and ${validationErrors.length - 5} more errors`));
     }
     console.log(chalk.yellow(`\n📝 Error messages have been added to the CSV file`));
     console.log(chalk.gray('   Fix the entries and re-run to process them.'));
+  }
+  // Highlight primary API failure reason when consistent
+  const primary = computePrimaryApiFailure(stats.errors);
+  if (primary && typeof primary.status === 'number') {
+    const hint = getFatalStatusMessage(primary.status, '');
+    if (hint) {
+      console.log(chalk.red(`Primary failure: ${primary.status} - ${hint}`));
+    }
   }
 }
 
@@ -720,44 +777,61 @@ async function watchCommand(campaignId, options) {
   const CampaignWatcher = require('./lib/campaign-watcher');
   const watcher = new CampaignWatcher(campaignData, options.apiUrl, apiKey);
 
-  // Setup keyboard handling
-  const readline = require('readline');
-  readline.emitKeypressEvents(process.stdin);
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-
-  process.stdin.on('keypress', async (str, key) => {
-    if (key.ctrl && key.name === 'c') {
-      console.log(chalk.yellow('\n\nExiting...'));
-      process.exit(0);
+  const isNonInteractive = Boolean(process.env.JEST_WORKER_ID || process.env.BLACKBOX_NON_INTERACTIVE === '1');
+  if (!isNonInteractive) {
+    // Setup keyboard handling
+    const readline = require('readline');
+    readline.emitKeypressEvents(process.stdin);
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
     }
-    
-    switch (key.name) {
-      case 'q':
+
+    process.stdin.on('keypress', async (str, key) => {
+      if (key.ctrl && key.name === 'c') {
         console.log(chalk.yellow('\n\nExiting...'));
         process.exit(0);
-        break;
-      case 'p':
-        watcher.togglePause();
-        break;
-      case 'r':
-        await watcher.update();
-        render();
-        break;
-      case 'e':
-        const filename = await watcher.exportResults();
-        console.log(chalk.green(`\n✓ Results exported to ${filename}`));
-        setTimeout(() => render(), 2000);
-        break;
-    }
-  });
+      }
+      
+      switch (key.name) {
+        case 'q':
+          console.log(chalk.yellow('\n\nExiting...'));
+          process.exit(0);
+          break;
+        case 'p':
+          watcher.togglePause();
+          break;
+        case 'r':
+          await watcher.update();
+          render();
+          break;
+        case 'e':
+          const filename = await watcher.exportResults();
+          console.log(chalk.green(`\n✓ Results exported to ${filename}`));
+          setTimeout(() => render(), 2000);
+          break;
+      }
+    });
+  }
 
   // Render function
   const render = () => {
     console.clear();
     
     // Header
+    if (watcher.agentFetchWarning) {
+      console.log(chalk.bgYellow.black(` ${watcher.agentFetchWarning} `));
+      if (watcher.agentFatalExit) {
+        const exitMsg = watcher.agentNotFound
+          ? 'Exiting: The specified agent does not exist. Please verify the agent ID in the BlackBox UI.'
+          : (watcher.agentFetchWarning.includes('401')
+              ? 'Exiting: Invalid API key. Provide a valid key via --api-key or BLACKBOX_API_KEY.'
+              : watcher.agentFetchWarning.includes('403')
+                ? 'Exiting: Access forbidden for this API key on the requested resource.'
+                : 'Exiting due to unrecoverable error.');
+        console.log(chalk.red(exitMsg));
+        process.exit(1);
+      }
+    }
     console.log(chalk.cyan('┌─ Campaign Monitor ──────────────────────────────────────────────────────┐'));
     console.log(chalk.cyan('│') + ` Campaign: ${chalk.bold(campaignData.campaignId)}`.padEnd(73) + chalk.cyan('│'));
     console.log(chalk.cyan('│') + ` Source: ${campaignData.csvFile} (${campaignData.totalCalls} calls)`.padEnd(73) + chalk.cyan('│'));
@@ -865,30 +939,49 @@ async function watchCommand(campaignId, options) {
   
   // Wait for agent details to be fetched
   await watcher.fetchAgentDetails();
+  // Exit immediately on definitive agent errors to avoid extra API calls
+  if (watcher.agentFatalExit) {
+    if (watcher.agentFetchWarning) {
+      console.log(chalk.bgYellow.black(` ${watcher.agentFetchWarning} `));
+    }
+    const exitMsg = watcher.agentNotFound
+      ? 'Exiting: The specified agent does not exist. Please verify the agent ID in the BlackBox UI.'
+      : (watcher.agentFetchWarning && watcher.agentFetchWarning.includes('401')
+          ? 'Exiting: Invalid API key. Provide a valid key via --api-key or BLACKBOX_API_KEY.'
+          : (watcher.agentFetchWarning && watcher.agentFetchWarning.includes('403')
+              ? 'Exiting: Access forbidden for this API key on the requested resource.'
+              : 'Exiting due to unrecoverable error.'));
+    console.log(chalk.red(exitMsg));
+    process.exit(1);
+  }
   
   // Then update call data
   await watcher.update();
   render();
 
-  // Set up refresh interval
-  const refreshInterval = parseInt(options.refresh) * 1000;
-  const interval = setInterval(async () => {
-    if (!watcher.isPaused) {
-      await watcher.update();
-      render();
-      
-      // Check if campaign is complete
-      if (watcher.isComplete()) {
-        console.log(chalk.green('\n\n✓ Campaign completed!'));
-        clearInterval(interval);
-        process.exit(0);
+  if (!isNonInteractive) {
+    // Set up refresh interval
+    const refreshInterval = parseInt(options.refresh) * 1000;
+    const interval = setInterval(async () => {
+      if (!watcher.isPaused) {
+        await watcher.update();
+        render();
+        
+        // Check if campaign is complete
+        if (watcher.isComplete()) {
+          console.log(chalk.green('\n\n✓ Campaign completed!'));
+          clearInterval(interval);
+          process.exit(0);
+        }
       }
-    }
-  }, refreshInterval);
+    }, refreshInterval);
+  }
 }
 
-// Parse command line arguments
-program.parse(process.argv);
+// Parse command line arguments when executed directly
+if (require.main === module) {
+  program.parse(process.argv);
+}
 
 // Export functions for testing
 module.exports = {
@@ -898,5 +991,9 @@ module.exports = {
   writeProcessedCSV,
   loadPreviousCampaignEndpoints,
   readCallsFromCSV,
-  Stats
+  Stats,
+  // Exports for tests
+  getFatalStatusMessage,
+  computePrimaryApiFailure
+  ,watchCommand
 };

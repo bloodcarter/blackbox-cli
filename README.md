@@ -297,3 +297,38 @@ The watch command will show:
 - Warning when outside working hours
 - Next available calling window
 - Link to adjust schedule in the BlackBox UI
+
+## Troubleshooting
+
+- **404 Agent not found**
+  - Symptom:
+    - Batch: `Agent not found (404). Check the agent ID: <id>` (printed once), batches stop.
+    - Watch: `Agent not found (404).` then exits with: `Exiting: The specified agent does not exist. Please verify the agent ID in the BlackBox UI.`
+  - Fix: Verify the agent UUID from the Agents page URL and re-run with the correct ID.
+
+- **401 Invalid API key**
+  - Symptom:
+    - Batch: `Invalid API key (401).` (printed once), batches stop.
+    - Watch: `Invalid API key (401).` then exits with guidance.
+  - Fix: Pass a valid key with `--api-key` or set `BLACKBOX_API_KEY`.
+
+- **403 Forbidden**
+  - Symptom:
+    - Batch: `Forbidden (403). Your API key does not have access...` (printed once), batches stop.
+    - Watch: `Forbidden (403).` then exits indicating lack of access.
+  - Fix: Ensure your key has access to the target agent/workspace.
+
+- **429 Too Many Requests (rate limiting)**
+  - Symptom: API requests fail intermittently with 429 (details visible with `--verbose`).
+  - Fix: Reduce `--batch-size` and/or increase `--delay` between batches.
+
+- **Network / server issues**
+  - Symptom: `No response from server` details appear with `--verbose`.
+  - Fix: Check connectivity, VPN/proxy settings, and try again.
+
+- **Verbose diagnostics**
+  - Run with `--verbose` to see HTTP status codes and response payloads for failures.
+
+- **Summary hint**
+  - After a run with failures, the summary may include: `Primary failure: <status> - <hint>` to highlight the dominant error.
+
