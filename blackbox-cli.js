@@ -17,6 +17,8 @@ const { Command } = require('commander');
 const cliProgress = require('cli-progress');
 const chalk = require('chalk');
 const ora = require('ora');
+const { fetchConcurrency } = require('./lib/concurrency-service');
+const { calculateUtilizationPct, getConcurrencyLevel, getConcurrencyStatusMessage } = require('./lib/concurrency-utils');
 
 // Statistics tracking
 class Stats {
@@ -588,6 +590,32 @@ async function batchCallCommand(csvFile, agentId, options) {
     console.log(chalk.yellow('Mode: DRY RUN (no API calls will be made)'));
   }
   console.log('');
+  // Fetch and show concurrency info (non-blocking for the rest of the flow)
+  try {
+    const { active, concurrency } = await fetchConcurrency(options.apiUrl, apiKey);
+    const pct = calculateUtilizationPct(active, concurrency);
+    const level = getConcurrencyLevel(active, concurrency);
+    const message = getConcurrencyStatusMessage(active, concurrency);
+    const line = `Concurrency: ${active} / ${concurrency} — ${message} (${pct}%)`;
+    if (level === 'critical') {
+      console.log(chalk.red(line));
+    } else if (level === 'warning') {
+      console.log(chalk.yellow(line));
+    } else if (level === 'disabled') {
+      console.log(chalk.gray(line));
+    } else {
+      console.log(chalk.green(line));
+    }
+  } catch (e) {
+    const status = e && e.response && e.response.status;
+    if (status === 401) {
+      console.log(chalk.red('Concurrency: Unauthorized (401).'));
+    } else if (status === 403) {
+      console.log(chalk.red('Concurrency: Forbidden (403).'));
+    } else {
+      console.log(chalk.gray('Concurrency: unavailable.'));
+    }
+  }
   
   try {
     // Load previously enrolled endpoints
@@ -801,6 +829,7 @@ async function watchCommand(campaignId, options) {
           watcher.togglePause();
           break;
         case 'r':
+          await watcher.updateConcurrency(true);
           await watcher.update();
           render();
           break;
@@ -836,6 +865,8 @@ async function watchCommand(campaignId, options) {
     console.log(chalk.cyan('│') + ` Campaign: ${chalk.bold(campaignData.campaignId)}`.padEnd(73) + chalk.cyan('│'));
     console.log(chalk.cyan('│') + ` Source: ${campaignData.csvFile} (${campaignData.totalCalls} calls)`.padEnd(73) + chalk.cyan('│'));
     console.log(chalk.cyan('│') + ` Agent: ${watcher.getAgentDisplayName()}`.padEnd(73) + chalk.cyan('│'));
+    // Keep header line uncolored to avoid border misalignment
+    console.log(chalk.cyan('│') + ` ${watcher.getConcurrencyDisplay()}`.padEnd(73) + chalk.cyan('│'));
     
     const runtime = Math.floor((Date.now() - new Date(campaignData.createdAt).getTime()) / 1000);
     const hours = Math.floor(runtime / 3600);
@@ -845,6 +876,12 @@ async function watchCommand(campaignId, options) {
     
     console.log(chalk.cyan('│') + ` Runtime: ${runtimeStr} | Started: ${new Date(campaignData.createdAt).toLocaleString()}`.padEnd(73) + chalk.cyan('│'));
     console.log(chalk.cyan('└─────────────────────────────────────────────────────────────────────────┘'));
+    // Concurrency alert block (persistent when not healthy or disabled)
+    const alertLines = watcher.getConcurrencyAlertLines();
+    if (alertLines.length > 0) {
+      console.log('');
+      alertLines.forEach(line => console.log(line));
+    }
     
     // Schedule Status
     const scheduleStatus = watcher.isWithinSchedule();
