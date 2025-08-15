@@ -4,7 +4,7 @@ jest.mock('axios');
 const {
   getFatalStatusMessage,
   computePrimaryApiFailure
-} = require('..//blackbox-cli.js');
+} = require('../lib/utils.js');
 
 describe('Fatal status messaging', () => {
   test('maps 404 to agent not found with agent id', () => {
