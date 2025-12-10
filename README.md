@@ -8,7 +8,7 @@ A simple batch calling tool for BlackBox API. Follow these two steps to launch a
 
 ### Prerequisites
 - Node.js installed on your system
-- Your Dasha API key from https://playground.dasha.ai/apikey
+- Your Dasha API key from https://auth.dasha.ai/PersonalTokens
 - Your agent ID (the UUID from your agent's URL)
 
 ### Step 1: Launch a Campaign
@@ -22,7 +22,7 @@ npx git+https://github.com/bloodcarter/blackbox-cli.git batch-call ./sample-call
   Example: If your URL is `https://blackbox.dasha.ai/agents/edit/18a55759-7fdb-42e1-9c63-8d3b18be850f`  
   Your agent ID is: `18a55759-7fdb-42e1-9c63-8d3b18be850f`
   
-- `<API_KEY>`: Get it from https://playground.dasha.ai/apikey
+- `<API_KEY>`: Get it from https://auth.dasha.ai/PersonalTokens
 
 **Example command:**
 ```bash
